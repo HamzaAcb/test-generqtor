@@ -10,18 +10,19 @@ export async function imagesToA4Pdf(images: ImageItem[]) {
   // Add two images per page
   for (let i = 0; i < images.length; i += 2) {
     const page = pdf.addPage([A4.w, A4.h]);
-    const slotH = (A4.h - 60) / 2; // margin top+bottom = 60
+    const slotH = (A4.h - 60) / 2;
     const slots = [
       { x: 30, y: A4.h - 30 - slotH, w: A4.w - 60, h: slotH },
-      { x: 30, y: 30,               w: A4.w - 60, h: slotH },
+      { x: 30, y: 30, w: A4.w - 60, h: slotH },
     ];
 
     for (let s = 0; s < 2; s++) {
       const img = images[i + s];
       if (!img) break;
 
-      const bytes = dataUrlToBytes(img.dataUrl);
-      const embedded = img.dataUrl.startsWith("data:image/png")
+      // ✅ Corrected field name (fileData)
+      const bytes = dataUrlToBytes(img.fileData);
+      const embedded = img.fileData.startsWith("data:image/png")
         ? await pdf.embedPng(bytes)
         : await pdf.embedJpg(bytes);
 
@@ -46,18 +47,17 @@ export async function imagesToA4Pdf(images: ImageItem[]) {
 
   const bytes = await pdf.save();
 
-  // Convert pdf-lib bytes to a valid ArrayBuffer
+  // Convert to ArrayBuffer safely
   const arrayBuffer = bytes.buffer.slice(
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength
   );
-  
-  // Create the PDF blob safely for TypeScript
+
   return new Blob([arrayBuffer as ArrayBuffer], { type: "application/pdf" });
 }
 
-// helper to decode dataURL to bytes
+// Decode dataURL → bytes
 function dataUrlToBytes(dataUrl: string) {
   const base64 = dataUrl.split(",")[1];
-  return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+  return Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
 }
