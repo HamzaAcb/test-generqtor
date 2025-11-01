@@ -11,13 +11,10 @@ type View = "home" | "create" | "name" | "files" | "workspace";
 export default function Page() {
   // -------- App State --------
   const [view, setView] = useState<View>("home");
-
   const [folders, setFolders] = useState<Folder[]>([]);
   const [currentFolderId, setCurrentFolderId] = useState<string>("");
-
   const [uploadedPhotos, setUploadedPhotos] = useState<string[]>([]);
   const [newTestName, setNewTestName] = useState("");
-
   const [folderSearch, setFolderSearch] = useState("");
 
   // -------- Persistence --------
@@ -28,7 +25,6 @@ export default function Page() {
       try {
         setFolders(JSON.parse(raw));
       } catch {
-        // if corrupted, reset
         setFolders([]);
       }
     }
@@ -53,7 +49,6 @@ export default function Page() {
     const results: string[] = [];
     for (const f of all) {
       const dataUrl = await fileToDataUrl(f);
-      // scale to ~1600px on the long side for speed
       const scaled = await downscaleDataUrl(dataUrl, 1600);
       results.push(scaled);
     }
@@ -71,7 +66,7 @@ export default function Page() {
     URL.revokeObjectURL(url);
   }
 
-  // -------- Reusable bits --------
+  // -------- Header component --------
   const Header: React.FC<{
     title?: string;
     left?: React.ReactNode;
@@ -128,7 +123,7 @@ export default function Page() {
     );
   }
 
-  // ===================== CREATE (camera/docs) =====================
+  // ===================== CREATE =====================
   if (view === "create") {
     return (
       <div className="container">
@@ -196,14 +191,7 @@ export default function Page() {
         </div>
 
         {/* Tip */}
-        <div
-          className="card"
-          style={{
-            background: "#f9fdfa",
-            borderColor: "#d1eae3",
-            color: "#374151",
-          }}
-        >
+        <div className="card" style={{ background: "#f9fdfa", borderColor: "#d1eae3" }}>
           Tip: Use your phone camera or upload from your gallery. Images will be
           compressed automatically for faster PDF generation.
         </div>
@@ -252,7 +240,7 @@ export default function Page() {
     );
   }
 
-  // ===================== NAME (choose folder + set test name) =====================
+  // ===================== NAME =====================
   if (view === "name") {
     return (
       <div className="container">
@@ -300,11 +288,14 @@ export default function Page() {
                 const test: TestFile = {
                   id: uid(),
                   name: newTestName.trim(),
-                  images: uploadedPhotos.map((dataUrl, idx) => ({
+                  folderId: currentFolderId,
+                  images: uploadedPhotos.map((fileData, idx) => ({
                     id: uid(),
-                    dataUrl,
+                    fileData,
                     order: idx,
                   })),
+                  createdAt: new Date(),
+                  updatedAt: new Date(),
                 };
 
                 const updated: Folder = {
@@ -317,7 +308,6 @@ export default function Page() {
                 );
                 saveFolders(all);
 
-                // reset transient state
                 setUploadedPhotos([]);
                 setNewTestName("");
                 setView("workspace");
@@ -335,7 +325,7 @@ export default function Page() {
     );
   }
 
-  // ===================== FILES (folders list & management) =====================
+  // ===================== FILES =====================
   if (view === "files") {
     return (
       <div className="container">
@@ -365,7 +355,7 @@ export default function Page() {
               const f: Folder = {
                 id: uid(),
                 name,
-                createdAt: new Date().toISOString(),
+                createdAt: new Date(),
                 tests: [],
               };
               saveFolders([...folders, f]);
@@ -444,7 +434,7 @@ export default function Page() {
     );
   }
 
-  // ===================== WORKSPACE (tests inside a folder) =====================
+  // ===================== WORKSPACE =====================
   const folder = currentFolder;
 
   return (
@@ -523,7 +513,7 @@ export default function Page() {
                 </div>
               </div>
 
-              {/* Tiny thumbnails row */}
+              {/* Thumbnails row */}
               {test.images && test.images.length > 0 && (
                 <div
                   style={{
@@ -536,7 +526,7 @@ export default function Page() {
                   {test.images.slice(0, 8).map((img) => (
                     <img
                       key={img.id}
-                      src={img.dataUrl}
+                      src={img.fileData}
                       alt="thumb"
                       style={{
                         height: 56,
