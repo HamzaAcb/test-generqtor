@@ -1,8 +1,41 @@
 import "./globals.css";
+import type { Metadata, Viewport } from "next";
 
-export const metadata = {
-  title: "Test Generator",
-  description: "Create beautiful printable tests instantly",
+export const metadata: Metadata = {
+  title: "Test Generator – Create and Print Your Workbook Tests",
+  description:
+    "A simple website that lets students upload question photos, organize them, and instantly download clean A4 PDF tests.",
+  openGraph: {
+    title: "Test Generator",
+    description:
+      "Upload workbook questions and turn them into printable A4 tests in seconds.",
+    url: "https://test-generqtor.vercel.app",
+    siteName: "Test Generator",
+    images: [
+      {
+        url: "/og-preview.png",
+        width: 1200,
+        height: 630,
+        alt: "Test Generator App Preview",
+      },
+    ],
+    locale: "en_US",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Test Generator",
+    description:
+      "Upload workbook questions and download printable A4 PDF tests instantly.",
+    images: ["/og-preview.png"],
+  },
+};
+
+// ✅ New block — Next.js 16+ requires this separately
+export const viewport: Viewport = {
+  themeColor: "#00a387",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({
@@ -12,36 +45,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-gradient-to-br from-green-50 via-white to-green-100 text-gray-900 font-sans">
-        {/* HEADER */}
-        <header className="sticky top-0 z-40 border-b border-green-200 bg-white/80 backdrop-blur-md shadow-sm">
-          <div className="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-green-500 to-emerald-600 text-white shadow-md">
-                📘
-              </div>
-              <h1 className="text-2xl font-semibold text-green-700 tracking-tight">
-                Test Generator
-              </h1>
-            </div>
-            <a
-              href="https://vercel.com"
-              target="_blank"
-              className="text-sm text-gray-600 hover:text-green-600 transition"
-            >
-              Deployed on Vercel
-            </a>
-          </div>
-        </header>
-
-        {/* MAIN CONTENT */}
-        <main className="mx-auto max-w-5xl px-4 py-10 sm:px-6">{children}</main>
-
-        {/* FOOTER */}
-        <footer className="mt-10 border-t border-gray-200 py-6 text-center text-sm text-gray-500">
-          Created with ❤️ — No login, all local
-        </footer>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

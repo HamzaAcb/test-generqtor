@@ -1,99 +1,288 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+
+import React, { useEffect, useMemo, useState } from "react";
 import { uid } from "@/lib/id";
-import { Folder, ImageItem } from "@/types";
-import { loadFolders, upsertFolder } from "@/lib/storage";
 import { fileToDataUrl, downscaleDataUrl } from "@/lib/images";
 import { imagesToA4Pdf } from "@/lib/pdf";
+import type { Folder, TestFile } from "@/types";
+
+type View = "home" | "create" | "name" | "files" | "workspace";
 
 export default function Page() {
-  const [folders, setFolders] = useState<Folder[]>([]);
-  const [currentId, setCurrentId] = useState<string>("");
-  const current = useMemo(
-    () => folders.find((f) => f.id === currentId),
-    [folders, currentId]
-  );
+  // -------- App State --------
+  const [view, setView] = useState<View>("home");
 
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const [currentFolderId, setCurrentFolderId] = useState<string>("");
+
+  const [uploadedPhotos, setUploadedPhotos] = useState<string[]>([]);
+  const [newTestName, setNewTestName] = useState("");
+
+  const [folderSearch, setFolderSearch] = useState("");
+
+  // -------- Persistence --------
   useEffect(() => {
     if (typeof window === "undefined") return;
-    setFolders(loadFolders());
+    const raw = localStorage.getItem("folders");
+    if (raw) {
+      try {
+        setFolders(JSON.parse(raw));
+      } catch {
+        // if corrupted, reset
+        setFolders([]);
+      }
+    }
   }, []);
 
-  function createFolder(name: string) {
-    if (!name.trim()) return;
-    const f: Folder = {
-      id: uid(),
-      name: name.trim(),
-      createdAt: new Date().toISOString(),
-      images: [],
-    };
-    upsertFolder(f);
-    setFolders(loadFolders());
-    setCurrentId(f.id);
-  }
-
-  async function onFilesSelected(files: FileList | null) {
-    if (!files || !current) return;
-    const limitLeft = Math.max(0, 25 - current.images.length);
-    const arr = Array.from(files).slice(0, limitLeft);
-    const baseOrder = current.images.length;
-    const items: ImageItem[] = [];
-    for (let i = 0; i < arr.length; i++) {
-      const dataUrl = await fileToDataUrl(arr[i]);
-      const scaled = await downscaleDataUrl(dataUrl, 1600);
-      items.push({ id: uid(), dataUrl: scaled, order: baseOrder + i });
+  const saveFolders = (next: Folder[]) => {
+    setFolders(next);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("folders", JSON.stringify(next));
     }
-    const updated: Folder = { ...current, images: [...current.images, ...items] };
-    upsertFolder(updated);
-    setFolders(loadFolders());
+  };
+
+  const currentFolder = useMemo(
+    () => folders.find((f) => f.id === currentFolderId),
+    [folders, currentFolderId]
+  );
+
+  // -------- Upload handlers --------
+  async function onFilesSelected(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    const all = Array.from(files);
+    const results: string[] = [];
+    for (const f of all) {
+      const dataUrl = await fileToDataUrl(f);
+      // scale to ~1600px on the long side for speed
+      const scaled = await downscaleDataUrl(dataUrl, 1600);
+      results.push(scaled);
+    }
+    setUploadedPhotos((prev) => [...prev, ...results]);
   }
 
-  function deleteImage(id: string) {
-    if (!current) return;
-    const images = current.images
-      .filter((x) => x.id !== id)
-      .map((x, i) => ({ ...x, order: i }));
-    upsertFolder({ ...current, images });
-    setFolders(loadFolders());
-  }
-
-  function move(id: string, dir: -1 | 1) {
-    if (!current) return;
-    const imgs = [...current.images].sort((a, b) => a.order - b.order);
-    const idx = imgs.findIndex((x) => x.id === id);
-    const swap = idx + dir;
-    if (swap < 0 || swap >= imgs.length) return;
-    [imgs[idx].order, imgs[swap].order] = [imgs[swap].order, imgs[idx].order];
-    const renum = imgs
-      .sort((a, b) => a.order - b.order)
-      .map((x, i) => ({ ...x, order: i }));
-    upsertFolder({ ...current, images: renum });
-    setFolders(loadFolders());
-  }
-
-  async function generatePdf() {
-    if (!current || current.images.length === 0) return;
-    const images = [...current.images].sort((a, b) => a.order - b.order);
-    const blob = await imagesToA4Pdf(images);
+  // -------- PDF --------
+  async function handleDownload(test: TestFile) {
+    const blob = await imagesToA4Pdf(test.images);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${current.name.replace(/\s+/g, "_")}.pdf`;
+    a.download = `${test.name.replace(/\s+/g, "_")}.pdf`;
     a.click();
     URL.revokeObjectURL(url);
   }
 
-  return (
-    <main className="space-y-10">
-      {/* Folder Section */}
-      <section className="rounded-2xl bg-white p-6 shadow-lg ring-1 ring-gray-100 transition hover:shadow-xl">
-        <div className="flex flex-wrap items-center gap-3">
-          <select
-            className="rounded-lg border border-gray-300 p-2 text-gray-800 focus:border-green-600 focus:ring-2 focus:ring-green-100"
-            value={currentId}
-            onChange={(e) => setCurrentId(e.target.value)}
+  // -------- Reusable bits --------
+  const Header: React.FC<{
+    title?: string;
+    left?: React.ReactNode;
+    right?: React.ReactNode;
+  }> = ({ title, left, right }) => (
+    <div
+      className="flex"
+      style={{
+        marginBottom: 16,
+        background: "#ffffffaa",
+        backdropFilter: "blur(6px)",
+        borderRadius: 12,
+        padding: "12px 16px",
+        boxShadow: "0 2px 10px rgba(0,0,0,0.06)",
+      }}
+    >
+      <div>{left}</div>
+      <div style={{ margin: "0 auto", fontWeight: 700, color: "#007f73" }}>
+        {title}
+      </div>
+      <div>{right}</div>
+    </div>
+  );
+
+  // ===================== HOME =====================
+  if (view === "home") {
+    return (
+      <div className="container">
+        <Header
+          title="Strawberry Test"
+          right={
+            <button
+              onClick={() => setView("files")}
+              style={{ background: "#e3f5f1", color: "#006a60" }}
+            >
+              Folders
+            </button>
+          }
+        />
+        <div className="card" style={{ textAlign: "center", padding: "32px" }}>
+          <h2 style={{ color: "#1f2937", marginBottom: 8 }}>Create a New Test</h2>
+          <p style={{ color: "#6b7280", marginBottom: 20 }}>
+            Upload question photos, organize them by folder, and export to a
+            printable PDF.
+          </p>
+          <div className="flex" style={{ justifyContent: "center" }}>
+            <button onClick={() => setView("create")}>Create New Test</button>
+          </div>
+        </div>
+        <p style={{ textAlign: "center", color: "#6b7280", marginTop: 12 }}>
+          No login • All data stays on your device
+        </p>
+      </div>
+    );
+  }
+
+  // ===================== CREATE (camera/docs) =====================
+  if (view === "create") {
+    return (
+      <div className="container">
+        <Header
+          title="Upload Questions"
+          left={
+            <button
+              onClick={() => {
+                setUploadedPhotos([]);
+                setView("home");
+              }}
+              style={{ background: "#f3f4f6", color: "#111827" }}
+            >
+              ← Home
+            </button>
+          }
+        />
+
+        {/* Camera / Docs tiles */}
+        <div className="flex" style={{ gap: 12, marginBottom: 16 }}>
+          <label
+            className="card"
+            style={{
+              flex: 1,
+              textAlign: "center",
+              padding: "28px 16px",
+              background: "#efe7ff",
+              borderColor: "#d9ccff",
+              cursor: "pointer",
+            }}
           >
-            <option value="">Select Folder</option>
+            <div style={{ fontSize: 24, marginBottom: 6 }}>📷</div>
+            <div style={{ fontWeight: 600, color: "#4b5563" }}>Camera</div>
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              multiple
+              onChange={(e) => onFilesSelected(e.currentTarget.files)}
+              style={{ display: "none" }}
+            />
+          </label>
+
+          <label
+            className="card"
+            style={{
+              flex: 1,
+              textAlign: "center",
+              padding: "28px 16px",
+              background: "#fff3cd",
+              borderColor: "#ffe69c",
+              cursor: "pointer",
+            }}
+          >
+            <div style={{ fontSize: 24, marginBottom: 6 }}>📁</div>
+            <div style={{ fontWeight: 600, color: "#4b5563" }}>Docs / Gallery</div>
+            <input
+              type="file"
+              accept="image/*"
+              multiple
+              onChange={(e) => onFilesSelected(e.currentTarget.files)}
+              style={{ display: "none" }}
+            />
+          </label>
+        </div>
+
+        {/* Tip */}
+        <div
+          className="card"
+          style={{
+            background: "#f9fdfa",
+            borderColor: "#d1eae3",
+            color: "#374151",
+          }}
+        >
+          Tip: Use your phone camera or upload from your gallery. Images will be
+          compressed automatically for faster PDF generation.
+        </div>
+
+        {/* Uploaded previews */}
+        {uploadedPhotos.length > 0 && (
+          <>
+            <h3 style={{ margin: "12px 0 6px", color: "#007f73" }}>
+              Uploaded Images ({uploadedPhotos.length})
+            </h3>
+            <div className="grid" style={{ maxHeight: 260, overflowY: "auto" }}>
+              {uploadedPhotos.map((src, i) => (
+                <div key={i} className="card" style={{ padding: 6 }}>
+                  <img
+                    src={src}
+                    alt={`preview-${i}`}
+                    style={{
+                      width: "100%",
+                      height: 120,
+                      objectFit: "cover",
+                      borderRadius: 8,
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {/* Actions */}
+        <div className="flex" style={{ marginTop: 16 }}>
+          <button
+            onClick={() => {
+              if (uploadedPhotos.length === 0) return;
+              setView("name");
+            }}
+            disabled={uploadedPhotos.length === 0}
+            style={{
+              opacity: uploadedPhotos.length ? 1 : 0.5,
+            }}
+          >
+            Next →
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // ===================== NAME (choose folder + set test name) =====================
+  if (view === "name") {
+    return (
+      <div className="container">
+        <Header
+          title="Name Your Test"
+          left={
+            <button
+              onClick={() => setView("create")}
+              style={{ background: "#f3f4f6", color: "#111827" }}
+            >
+              ← Back
+            </button>
+          }
+        />
+
+        <div className="card">
+          <label style={{ fontWeight: 600, color: "#374151" }}>Test name</label>
+          <input
+            placeholder="e.g., Math – Polynomials – Set 1"
+            value={newTestName}
+            onChange={(e) => setNewTestName(e.target.value)}
+          />
+          <label style={{ fontWeight: 600, color: "#374151" }}>
+            Save into folder
+          </label>
+          <select
+            value={currentFolderId}
+            onChange={(e) => setCurrentFolderId(e.target.value)}
+          >
+            <option value="">Select a folder…</option>
             {folders.map((f) => (
               <option key={f.id} value={f.id}>
                 {f.name}
@@ -101,114 +290,280 @@ export default function Page() {
             ))}
           </select>
 
+          <div className="flex" style={{ justifyContent: "flex-end" }}>
+            <button
+              onClick={() => {
+                if (!newTestName.trim() || !currentFolderId) return;
+                const folder = folders.find((f) => f.id === currentFolderId);
+                if (!folder) return;
+
+                const test: TestFile = {
+                  id: uid(),
+                  name: newTestName.trim(),
+                  images: uploadedPhotos.map((dataUrl, idx) => ({
+                    id: uid(),
+                    dataUrl,
+                    order: idx,
+                  })),
+                };
+
+                const updated: Folder = {
+                  ...folder,
+                  tests: [...(folder.tests || []), test],
+                };
+
+                const all = folders.map((f) =>
+                  f.id === folder.id ? updated : f
+                );
+                saveFolders(all);
+
+                // reset transient state
+                setUploadedPhotos([]);
+                setNewTestName("");
+                setView("workspace");
+              }}
+              disabled={!newTestName.trim() || !currentFolderId}
+              style={{
+                opacity: !newTestName.trim() || !currentFolderId ? 0.5 : 1,
+              }}
+            >
+              Save Test
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ===================== FILES (folders list & management) =====================
+  if (view === "files") {
+    return (
+      <div className="container">
+        <Header
+          title="Folders"
+          left={
+            <button
+              onClick={() => setView("home")}
+              style={{ background: "#f3f4f6", color: "#111827" }}
+            >
+              ← Home
+            </button>
+          }
+        />
+
+        {/* Create folder */}
+        <div className="card">
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              const name = (
-                e.currentTarget.elements.namedItem("name") as HTMLInputElement
-              ).value.trim();
-              if (name) {
-                createFolder(name);
-                (e.currentTarget as HTMLFormElement).reset();
-              }
+              const form = e.currentTarget;
+              const input = form.elements.namedItem(
+                "folderName"
+              ) as HTMLInputElement;
+              const name = (input.value || "").trim();
+              if (!name) return;
+              const f: Folder = {
+                id: uid(),
+                name,
+                createdAt: new Date().toISOString(),
+                tests: [],
+              };
+              saveFolders([...folders, f]);
+              input.value = "";
             }}
-            className="flex items-center gap-2"
           >
-            <input
-              name="name"
-              placeholder="New folder name"
-              className="rounded-lg border border-gray-300 p-2 text-gray-800 focus:border-green-600 focus:ring-2 focus:ring-green-100"
-            />
-            <button className="rounded-lg bg-gradient-to-br from-green-500 to-emerald-600 px-4 py-2 font-medium text-white shadow-md hover:shadow-lg hover:brightness-110 transition">
-              Create
-            </button>
+            <label style={{ fontWeight: 600, color: "#374151" }}>
+              New folder
+            </label>
+            <div className="flex">
+              <input name="folderName" placeholder="e.g., Math" />
+              <button type="submit">Add</button>
+            </div>
           </form>
-
-          <div className="ml-auto text-sm text-gray-600">
-            {current ? `${current.images.length} images` : "No folder selected"}
-          </div>
         </div>
-      </section>
 
-      {/* Upload Box */}
-      <section className="rounded-2xl bg-white p-10 shadow-lg ring-1 ring-gray-100 text-center hover:shadow-xl transition">
-        <label className="flex flex-col items-center justify-center rounded-xl border-2 border-dashed border-green-300 bg-gradient-to-br from-green-50 to-white p-10 hover:border-green-500 hover:bg-green-50 cursor-pointer transition">
-          <span className="text-5xl mb-3">📸</span>
-          <span className="text-gray-700 font-medium">
-            Click or drop images here
-          </span>
-          <input
-            type="file"
-            multiple
-            accept="image/*"
-            capture="environment"
-            onChange={(e) => onFilesSelected(e.currentTarget.files)}
-            className="hidden"
-          />
-        </label>
-        <p className="mt-3 text-sm text-gray-500">
-          Tip: Use your camera or gallery — images are automatically optimized.
-        </p>
-      </section>
+        {/* Search */}
+        <input
+          placeholder="Search folders…"
+          value={folderSearch}
+          onChange={(e) => setFolderSearch(e.target.value)}
+        />
 
-      {/* Image Grid */}
-      {current && (
-        <section className="rounded-2xl bg-white p-6 shadow-lg ring-1 ring-gray-100 transition hover:shadow-xl">
-          <h2 className="mb-4 text-lg font-semibold text-green-700">
-            Uploaded Images
-          </h2>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-            {[...current.images]
-              .sort((a, b) => a.order - b.order)
-              .map((img) => (
-                <div
-                  key={img.id}
-                  className="group relative overflow-hidden rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition"
-                >
-                  <img
-                    src={img.dataUrl}
-                    className="h-44 w-full object-cover"
-                    alt="Preview"
-                  />
-                  <div className="absolute inset-x-0 bottom-0 flex items-center gap-1 bg-black/60 p-1 opacity-0 transition group-hover:opacity-100">
-                    <button
-                      onClick={() => move(img.id, -1)}
-                      className="text-xs text-white px-2"
-                    >
-                      ◀
-                    </button>
-                    <span className="text-[10px] text-white">
-                      #{img.order + 1}
-                    </span>
-                    <button
-                      onClick={() => move(img.id, 1)}
-                      className="text-xs text-white px-2"
-                    >
-                      ▶
-                    </button>
-                    <button
-                      onClick={() => deleteImage(img.id)}
-                      className="ml-auto text-xs text-red-300 px-2"
-                    >
-                      Delete
-                    </button>
-                  </div>
+        {/* Folder list */}
+        {folders
+          .filter((f) =>
+            f.name.toLowerCase().includes(folderSearch.toLowerCase())
+          )
+          .map((folder) => (
+            <div key={folder.id} className="card">
+              <div className="flex">
+                <input
+                  value={folder.name}
+                  onChange={(e) => {
+                    const next = folders.map((f) =>
+                      f.id === folder.id ? { ...f, name: e.target.value } : f
+                    );
+                    saveFolders(next);
+                  }}
+                />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button
+                    onClick={() => {
+                      setCurrentFolderId(folder.id);
+                      setView("workspace");
+                    }}
+                    style={{ background: "#e3f5f1", color: "#006a60" }}
+                  >
+                    Open
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (
+                        confirm(
+                          `Delete folder "${folder.name}" and all its tests?`
+                        )
+                      ) {
+                        saveFolders(folders.filter((f) => f.id !== folder.id));
+                      }
+                    }}
+                    style={{
+                      background: "#fee2e2",
+                      color: "#991b1b",
+                    }}
+                  >
+                    Delete
+                  </button>
                 </div>
-              ))}
-          </div>
-        </section>
-      )}
-
-      {/* Generate Button */}
-      <div className="sticky bottom-6 z-20 flex justify-end">
-        <button
-          onClick={generatePdf}
-          disabled={!current || current.images.length === 0}
-          className="rounded-full bg-gradient-to-br from-green-500 to-emerald-600 px-6 py-3 font-semibold text-white shadow-lg hover:shadow-xl hover:brightness-110 disabled:opacity-40 transition"
-        >
-          Generate PDF (A4)
-        </button>
+              </div>
+              <div style={{ color: "#6b7280", marginTop: 6 }}>
+                {folder.tests?.length || 0} tests
+              </div>
+            </div>
+          ))}
       </div>
-    </main>
+    );
+  }
+
+  // ===================== WORKSPACE (tests inside a folder) =====================
+  const folder = currentFolder;
+
+  return (
+    <div className="container">
+      <Header
+        title={folder?.name || "Workspace"}
+        left={
+          <button
+            onClick={() => setView("files")}
+            style={{ background: "#f3f4f6", color: "#111827" }}
+          >
+            ← Folders
+          </button>
+        }
+        right={
+          <button
+            onClick={() => {
+              setView("create");
+            }}
+            style={{ background: "#e3f5f1", color: "#006a60" }}
+          >
+            + New Test
+          </button>
+        }
+      />
+
+      {!folder || (folder.tests || []).length === 0 ? (
+        <div className="card" style={{ textAlign: "center" }}>
+          No tests yet in this folder.
+        </div>
+      ) : (
+        <div style={{ display: "grid", gap: 12 }}>
+          {folder.tests.map((test) => (
+            <div key={test.id} className="card">
+              <div className="flex">
+                <input
+                  value={test.name}
+                  onChange={(e) => {
+                    const next = folders.map((f) =>
+                      f.id === folder.id
+                        ? {
+                            ...f,
+                            tests: f.tests.map((t) =>
+                              t.id === test.id
+                                ? { ...t, name: e.target.value }
+                                : t
+                            ),
+                          }
+                        : f
+                    );
+                    saveFolders(next);
+                  }}
+                />
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => handleDownload(test)}>
+                    Download PDF
+                  </button>
+                  <button
+                    onClick={() => {
+                      if (confirm(`Delete test "${test.name}"?`)) {
+                        const next = folders.map((f) =>
+                          f.id === folder.id
+                            ? {
+                                ...f,
+                                tests: f.tests.filter((t) => t.id !== test.id),
+                              }
+                            : f
+                        );
+                        saveFolders(next);
+                      }
+                    }}
+                    style={{ background: "#fee2e2", color: "#991b1b" }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+
+              {/* Tiny thumbnails row */}
+              {test.images && test.images.length > 0 && (
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    marginTop: 8,
+                    overflowX: "auto",
+                  }}
+                >
+                  {test.images.slice(0, 8).map((img) => (
+                    <img
+                      key={img.id}
+                      src={img.dataUrl}
+                      alt="thumb"
+                      style={{
+                        height: 56,
+                        width: 80,
+                        objectFit: "cover",
+                        borderRadius: 6,
+                        border: "1px solid #e5e7eb",
+                      }}
+                    />
+                  ))}
+                  {test.images.length > 8 && (
+                    <div
+                      style={{
+                        padding: "12px 8px",
+                        fontSize: 12,
+                        color: "#6b7280",
+                      }}
+                    >
+                      +{test.images.length - 8} more
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
